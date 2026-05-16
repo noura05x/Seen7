@@ -1,4 +1,4 @@
-SEEN4 
+# SEEN4
 =======
 
 Seen4 is a Flutter-based personal safety application that connects vulnerable users with their emergency contacts through real-time SOS alerts, Bluetooth-connected hardware, live GPS tracking, and audio/visual evidence capture. The system is built around a custom ESP32 wearable device that allows users to trigger emergencies hands-free, even without touching their phone.
