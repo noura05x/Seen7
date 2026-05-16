@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -34,6 +35,8 @@ class _VUDashboardState extends State<VUDashboard> {
 
   String _liveDeviceStatus = "Safe";
   String? _lastStreamUrl;
+
+  bool _isCreatingAlert = false;
 
   bool _hasValidCoords(double? lat, double? lng) {
     return lat != null && lng != null && lat != 0 && lng != 0;
@@ -99,7 +102,7 @@ class _VUDashboardState extends State<VUDashboard> {
     });
   }
 
-  void _handleBleMessageForUi(SeenBleMessage message) {
+  Future<void> _handleBleMessageForUi(SeenBleMessage message) async {
     if (!mounted) return;
 
     if (message.isReady || message.isArmed || message.isPong) {
@@ -113,9 +116,7 @@ class _VUDashboardState extends State<VUDashboard> {
     }
 
     if (message.isBattery) {
-      setState(() {
-        _liveBattery = message.battery;
-      });
+      setState(() => _liveBattery = message.battery);
       return;
     }
 
@@ -138,6 +139,18 @@ class _VUDashboardState extends State<VUDashboard> {
         }
         _lastStreamUrl = message.streamUrl;
       });
+
+      final hasInternet = await _hasInternetConnection();
+
+      if (!hasInternet) {
+        if (!mounted) return;
+        _showNoInternetMessage();
+        return;
+      }
+
+      await _createEmergencyAlert(source: 'device');
+
+      if (!mounted) return;
 
       showDialog(
         context: context,
@@ -194,79 +207,160 @@ class _VUDashboardState extends State<VUDashboard> {
     setState(() => isCountingDown = false);
   }
 
+  Future<bool> _hasInternetConnection() async {
+    try {
+      final result = await InternetAddress.lookup('google.com')
+          .timeout(const Duration(seconds: 3));
+
+      return result.isNotEmpty && result.first.rawAddress.isNotEmpty;
+    } on SocketException {
+      return false;
+    } on TimeoutException {
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  void _showNoInternetMessage() {
+    final lang = appLanguage;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          lang.text(
+            en: "No internet connection. Emergency alert could not be sent.",
+            ar: "لا يوجد اتصال بالإنترنت. تعذر إرسال تنبيه الطوارئ.",
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> triggerEmergency() async {
     final lang = appLanguage;
     setState(() => isCountingDown = false);
 
+    final hasInternet = await _hasInternetConnection();
+
+    if (!hasInternet) {
+      if (!mounted) return;
+      _showNoInternetMessage();
+      return;
+    }
+
     try {
       if (_ble.isConnected) {
         await _ble.arm();
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              lang.text(
-                en: "SOS command sent to SEEN device.",
-                ar: "تم إرسال أمر SOS إلى جهاز SEEN.",
-              ),
-            ),
-          ),
-        );
+        await _createEmergencyAlert(source: 'device');
       } else {
-        await _createAppOnlyAlert();
+        await _createEmergencyAlert(source: 'app');
+      }
 
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              lang.text(
-                en: "Emergency alert sent from the app.",
-                ar: "تم إرسال تنبيه الطوارئ من التطبيق.",
-              ),
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            lang.text(
+              en: "Emergency alert sent to your emergency contacts.",
+              ar: "تم إرسال تنبيه الطوارئ إلى جهات اتصال الطوارئ.",
             ),
           ),
+        ),
+      );
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+
+      if (e.code == 'unavailable' || e.code == 'network-request-failed') {
+        _showNoInternetMessage();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Emergency error: ${e.message ?? e.code}")),
         );
       }
+    } on SocketException {
+      if (!mounted) return;
+      _showNoInternetMessage();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Emergency error: $e")),
-      );
+
+      final errorText = e.toString().toLowerCase();
+
+      final isNetworkError = errorText.contains('network') ||
+          errorText.contains('socket') ||
+          errorText.contains('connection') ||
+          errorText.contains('host lookup') ||
+          errorText.contains('offline');
+
+      if (isNetworkError) {
+        _showNoInternetMessage();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Emergency error: $e")),
+        );
+      }
     }
   }
 
-  Future<void> _createAppOnlyAlert() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+  Future<void> _createEmergencyAlert({required String source}) async {
+    if (_isCreatingAlert) return;
+    _isCreatingAlert = true;
 
-    final userDoc =
-        await FirebaseFirestore.instance.collection('users').doc(user.uid).get();
-    final userData = userDoc.data() ?? {};
-    final userName =
-        (userData['name'] ?? user.displayName ?? 'Unknown User').toString();
-    final contactIds = await _loadEmergencyContactIds(user.uid);
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
 
-    await FirebaseFirestore.instance.collection('alerts').add({
-      'vulnerableId': user.uid,
-      'userId': user.uid,
-      'userName': userName,
-      'source': 'app',
-      'status': 'Triggered',
-      'location': 'Unknown Location',
-      'lat': null,
-      'lng': null,
-      'gpsFix': false,
-      'triggeredAt': FieldValue.serverTimestamp(),
-      'createdAt': FieldValue.serverTimestamp(),
-      'durationSeconds': 60,
-      'expiresAt':
-          Timestamp.fromDate(DateTime.now().add(const Duration(minutes: 1))),
-      'emergencyContactIds': contactIds,
-      'streamStatus': 'unavailable',
-      'streamUrl': null,
-      'audioEnabled': false,
-    });
+      final userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      final userData = userDoc.data() ?? {};
+
+      final userName = (userData['name'] ??
+              userData['fullName'] ??
+              user.displayName ??
+              user.email?.split('@').first ??
+              'Unknown User')
+          .toString();
+
+      final contactIds = await _loadEmergencyContactIds(user.uid);
+
+      final hasLocation = _hasValidCoords(_liveLat, _liveLng);
+      final streamUrl = (_lastStreamUrl ?? '').trim();
+
+      await FirebaseFirestore.instance.collection('alerts').add({
+        'vulnerableId': user.uid,
+        'userId': user.uid,
+        'userName': userName,
+        'source': source,
+        'status': 'Triggered',
+        'location': hasLocation
+            ? "${_liveLat!.toStringAsFixed(5)}, ${_liveLng!.toStringAsFixed(5)}"
+            : 'Unknown Location',
+        'lat': _liveLat,
+        'lng': _liveLng,
+        'latitude': _liveLat,
+        'longitude': _liveLng,
+        'gpsFix': hasLocation,
+        'battery': _liveBattery,
+        'triggeredAt': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'durationSeconds': 60,
+        'expiresAt': Timestamp.fromDate(
+          DateTime.now().add(const Duration(minutes: 1)),
+        ),
+        'emergencyContactIds': contactIds,
+        'streamStatus': streamUrl.isNotEmpty ? 'ready' : 'unavailable',
+        'streamUrl': streamUrl.isNotEmpty ? streamUrl : null,
+        'audioEnabled': false,
+      });
+
+      debugPrint("Emergency alert created for contacts: $contactIds");
+    } finally {
+      _isCreatingAlert = false;
+    }
   }
 
   Future<List<String>> _loadEmergencyContactIds(String vulnerableUserId) async {
@@ -280,6 +374,7 @@ class _VUDashboardState extends State<VUDashboard> {
 
     for (final doc in snapshot.docs) {
       final data = doc.data();
+
       final candidates = [
         data['contactUserId'],
         data['uid'],
@@ -289,7 +384,8 @@ class _VUDashboardState extends State<VUDashboard> {
       ];
 
       for (final candidate in candidates) {
-        final value = candidate?.toString();
+        final value = candidate?.toString().trim();
+
         if (value != null && value.isNotEmpty && !ids.contains(value)) {
           ids.add(value);
           break;
@@ -325,8 +421,10 @@ class _VUDashboardState extends State<VUDashboard> {
     return Scaffold(
       backgroundColor: AppColors.background,
       body: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream:
-            FirebaseFirestore.instance.collection('users').doc(user.uid).snapshots(),
+        stream: FirebaseFirestore.instance
+            .collection('users')
+            .doc(user.uid)
+            .snapshots(),
         builder: (context, userSnapshot) {
           final userData = userSnapshot.data?.data() ?? {};
 
@@ -346,8 +444,11 @@ class _VUDashboardState extends State<VUDashboard> {
                   .collection('devices')
                   .snapshots(),
               builder: (context, snapshot) {
-                final hasDevice = snapshot.hasData && snapshot.data!.docs.isNotEmpty;
+                final hasDevice =
+                    snapshot.hasData && snapshot.data!.docs.isNotEmpty;
+
                 final deviceDoc = hasDevice ? snapshot.data!.docs.first : null;
+
                 final deviceData =
                     hasDevice ? deviceDoc!.data() as Map<String, dynamic> : null;
 
@@ -356,12 +457,17 @@ class _VUDashboardState extends State<VUDashboard> {
 
                 final deviceName = (deviceData?['name'] ??
                         userData['pairedDeviceName'] ??
-                        lang.text(en: "No Device Paired", ar: "لا يوجد جهاز مقترن"))
+                        lang.text(
+                          en: "No Device Paired",
+                          ar: "لا يوجد جهاز مقترن",
+                        ))
                     .toString();
 
                 final deviceStatus = _ble.isConnected
                     ? "Connected"
-                    : (deviceData?['status'] ?? userData['status'] ?? _liveDeviceStatus)
+                    : (deviceData?['status'] ??
+                            userData['status'] ??
+                            _liveDeviceStatus)
                         .toString();
 
                 final batteryLevel = _bestBattery(
@@ -369,15 +475,22 @@ class _VUDashboardState extends State<VUDashboard> {
                   deviceBattery: deviceData?['battery'],
                 );
 
-                final lat =
-                    _toDouble(userData['lat']) ?? _toDouble(deviceData?['lat']) ?? _liveLat;
-                final lng =
-                    _toDouble(userData['lng']) ?? _toDouble(deviceData?['lng']) ?? _liveLng;
+                final lat = _toDouble(userData['lat']) ??
+                    _toDouble(deviceData?['lat']) ??
+                    _liveLat;
+
+                final lng = _toDouble(userData['lng']) ??
+                    _toDouble(deviceData?['lng']) ??
+                    _liveLng;
 
                 final hasLocation = _hasValidCoords(lat, lng);
+
                 final locationText = hasLocation
                     ? "${lat!.toStringAsFixed(5)}, ${lng!.toStringAsFixed(5)}"
-                    : lang.text(en: "Waiting for GPS fix", ar: "بانتظار تثبيت GPS");
+                    : lang.text(
+                        en: "Waiting for GPS fix",
+                        ar: "بانتظار تثبيت GPS",
+                      );
 
                 final isSafe = deviceStatus.toLowerCase() == "safe" ||
                     deviceStatus.toLowerCase() == "connected";
@@ -409,7 +522,10 @@ class _VUDashboardState extends State<VUDashboard> {
                       _sosButton(lang),
                       const SizedBox(height: 28),
                       Text(
-                        lang.text(en: "Quick Actions", ar: "الإجراءات السريعة"),
+                        lang.text(
+                          en: "Quick Actions",
+                          ar: "الإجراءات السريعة",
+                        ),
                         style: theme.textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
@@ -423,8 +539,14 @@ class _VUDashboardState extends State<VUDashboard> {
                               icon: Icons.location_on_outlined,
                               title: lang.text(en: "Location", ar: "الموقع"),
                               subtitle: hasLocation
-                                  ? lang.text(en: "Open live map", ar: "فتح الخريطة")
-                                  : lang.text(en: "Waiting for GPS", ar: "بانتظار GPS"),
+                                  ? lang.text(
+                                      en: "Open live map",
+                                      ar: "فتح الخريطة",
+                                    )
+                                  : lang.text(
+                                      en: "Waiting for GPS",
+                                      ar: "بانتظار GPS",
+                                    ),
                               onTap: hasDevice
                                   ? () {
                                       Navigator.push(
@@ -518,10 +640,15 @@ class _VUDashboardState extends State<VUDashboard> {
           Expanded(
             child: Text(
               lang.text(
-                en: "No device paired yet. Go to the Device tab to pair your SEEN necklace.",
-                ar: "لم يتم اقتران أي جهاز بعد. انتقل إلى تبويب الجهاز لاقتران قلادة SEEN.",
+                en:
+                    "No device paired yet. Go to the Device tab to pair your SEEN necklace.",
+                ar:
+                    "لم يتم اقتران أي جهاز بعد. انتقل إلى تبويب الجهاز لاقتران قلادة SEEN.",
               ),
-              style: const TextStyle(color: AppColors.textSecondary, height: 1.5),
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                height: 1.5,
+              ),
             ),
           ),
         ],
@@ -608,10 +735,14 @@ class _VUDashboardState extends State<VUDashboard> {
             icon: _ble.isConnected
                 ? Icons.bluetooth_connected_rounded
                 : Icons.bluetooth_disabled_rounded,
-            iconColor: _ble.isConnected ? AppColors.success : AppColors.textSecondary,
+            iconColor:
+                _ble.isConnected ? AppColors.success : AppColors.textSecondary,
             title: lang.text(en: "Device Connection", ar: "اتصال الجهاز"),
             subtitle: _ble.isConnected
-                ? lang.text(en: "Connected to SEEN necklace", ar: "متصل بقلادة SEEN")
+                ? lang.text(
+                    en: "Connected to SEEN necklace",
+                    ar: "متصل بقلادة SEEN",
+                  )
                 : lang.text(en: "Not connected", ar: "غير متصل"),
           ),
         ],

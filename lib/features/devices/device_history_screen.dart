@@ -11,11 +11,13 @@ import '../../core/theme/colors.dart';
 class DeviceHistoryScreen extends StatefulWidget {
   final String deviceName;
   final String? deviceId;
+  final String? userId;
 
   const DeviceHistoryScreen({
     super.key,
     required this.deviceName,
     this.deviceId,
+    this.userId,
   });
 
   @override
@@ -39,9 +41,7 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
     if (url.trim().isEmpty) return;
 
     try {
-      setState(() {
-        _audioLoading = true;
-      });
+      setState(() => _audioLoading = true);
 
       if (_playingAudioUrl == url) {
         await _audioPlayer.stop();
@@ -65,6 +65,7 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
         _playingAudioUrl = null;
       });
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Could not play audio: $e")),
       );
@@ -83,10 +84,9 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
       return;
     }
 
-    final url =
-        'https://www.google.com/maps/search/?api=1&query=$lat,$lng';
-
-    final uri = Uri.parse(url);
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
+    );
 
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -120,10 +120,18 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
     );
   }
 
+  double? _toDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final user = FirebaseAuth.instance.currentUser;
+    final currentUser = FirebaseAuth.instance.currentUser;
+
+    final ownerUserId = widget.userId ?? currentUser?.uid;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -149,14 +157,14 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
                 ],
               ),
             ),
-            if (user == null)
+            if (ownerUserId == null || ownerUserId.trim().isEmpty)
               const Expanded(
                 child: Center(child: Text("Not logged in")),
               )
             else
               Expanded(
                 child: FutureBuilder<String?>(
-                  future: _resolveDeviceId(user.uid),
+                  future: _resolveDeviceId(ownerUserId),
                   builder: (context, deviceSnapshot) {
                     if (deviceSnapshot.connectionState ==
                         ConnectionState.waiting) {
@@ -171,7 +179,7 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
 
                     Query query = FirebaseFirestore.instance
                         .collection('users')
-                        .doc(user.uid)
+                        .doc(ownerUserId)
                         .collection('devices')
                         .doc(deviceId)
                         .collection('history');
@@ -195,10 +203,19 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
                         final evidenceDocs = docs.where((doc) {
                           final data = doc.data() as Map<String, dynamic>;
 
-                          final audio =
-                              (data['audioUrl'] ?? '').toString().trim();
-                          final video =
-                              (data['videoUrl'] ?? '').toString().trim();
+                          final audio = (data['audioUrl'] ??
+                                  data['audioURL'] ??
+                                  data['audio'] ??
+                                  '')
+                              .toString()
+                              .trim();
+
+                          final video = (data['videoUrl'] ??
+                                  data['videoURL'] ??
+                                  data['video'] ??
+                                  '')
+                              .toString()
+                              .trim();
 
                           return audio.isNotEmpty || video.isNotEmpty;
                         }).toList();
@@ -234,13 +251,29 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
   ) {
     final theme = Theme.of(context);
 
-    final audioUrl = (data['audioUrl'] ?? '').toString().trim();
-    final videoUrl = (data['videoUrl'] ?? '').toString().trim();
+    final audioUrl = (data['audioUrl'] ??
+            data['audioURL'] ??
+            data['audio'] ??
+            '')
+        .toString()
+        .trim();
 
-    final lat = (data['lat'] as num?)?.toDouble();
-    final lng = (data['lng'] as num?)?.toDouble();
+    final videoUrl = (data['videoUrl'] ??
+            data['videoURL'] ??
+            data['video'] ??
+            '')
+        .toString()
+        .trim();
 
-    final Timestamp? ts = data['createdAt'] as Timestamp?;
+    final lat = _toDouble(data['lat'] ?? data['latitude']);
+    final lng = _toDouble(data['lng'] ?? data['longitude']);
+
+    final Timestamp? ts = data['createdAt'] is Timestamp
+        ? data['createdAt'] as Timestamp
+        : data['timestamp'] is Timestamp
+            ? data['timestamp'] as Timestamp
+            : null;
+
     final dt = ts?.toDate();
 
     final time = dt == null
@@ -382,13 +415,17 @@ class _DeviceHistoryScreenState extends State<DeviceHistoryScreen> {
     );
   }
 
-  Future<String?> _resolveDeviceId(String uid) async {
-    if (widget.deviceId != null && widget.deviceId!.trim().isNotEmpty) {
+  Future<String?> _resolveDeviceId(String ownerUserId) async {
+    if (widget.deviceId != null &&
+        widget.deviceId!.trim().isNotEmpty &&
+        widget.deviceId != "-") {
       return widget.deviceId;
     }
 
-    final doc =
-        await FirebaseFirestore.instance.collection('users').doc(uid).get();
+    final doc = await FirebaseFirestore.instance
+        .collection('users')
+        .doc(ownerUserId)
+        .get();
 
     return doc.data()?['pairedDeviceId']?.toString();
   }
@@ -412,6 +449,7 @@ class _EvidenceVideoPlayerPageState extends State<EvidenceVideoPlayerPage> {
 
   bool _loading = true;
   String? _error;
+  bool _initialized = false;
 
   @override
   void initState() {
@@ -432,6 +470,7 @@ class _EvidenceVideoPlayerPageState extends State<EvidenceVideoPlayerPage> {
 
       setState(() {
         _loading = false;
+        _initialized = true;
       });
     } catch (e) {
       if (!mounted) return;
@@ -445,7 +484,7 @@ class _EvidenceVideoPlayerPageState extends State<EvidenceVideoPlayerPage> {
 
   @override
   void dispose() {
-    if (!_loading && _error == null) {
+    if (_initialized) {
       _controller.dispose();
     }
     super.dispose();

@@ -51,6 +51,12 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
     }
   }
 
+  double? _toDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
+  }
+
   @override
   Widget build(BuildContext context) {
     final String vulnerableUserUid = (user["uid"] ?? "").toString();
@@ -83,11 +89,13 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
           String deviceId = "-";
 
           if (snapshot.hasData && snapshot.data!.docs.isNotEmpty) {
-            deviceData = snapshot.data!.docs.first.data() as Map<String, dynamic>;
+            deviceData =
+                snapshot.data!.docs.first.data() as Map<String, dynamic>;
             deviceId = snapshot.data!.docs.first.id;
           }
 
           final String deviceName = (deviceData?['name'] ??
+                  user["deviceName"] ??
                   lang.text(en: "No Device", ar: "لا يوجد جهاز"))
               .toString();
 
@@ -99,10 +107,10 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
               : (user["battery"] is num ? (user["battery"] as num).toInt() : 0);
 
           final double? lat =
-              deviceData?['lat'] is num ? (deviceData!['lat'] as num).toDouble() : null;
+              _toDouble(deviceData?['lat'] ?? deviceData?['latitude'] ?? user["lat"] ?? user["latitude"]);
 
           final double? lng =
-              deviceData?['lng'] is num ? (deviceData!['lng'] as num).toDouble() : null;
+              _toDouble(deviceData?['lng'] ?? deviceData?['longitude'] ?? user["lng"] ?? user["longitude"]);
 
           final String phone = (user["phone"] ?? "-").toString();
 
@@ -206,7 +214,9 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
                     ],
                   ),
                 ),
+
                 const SizedBox(height: 20),
+
                 _infoTile(
                   label: lang.text(en: "Device ID", ar: "معرّف الجهاز"),
                   value: deviceId,
@@ -223,7 +233,9 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
                   label: lang.text(en: "Battery", ar: "البطارية"),
                   value: battery > 0 ? "$battery%" : "-",
                 ),
+
                 const SizedBox(height: 22),
+
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -235,7 +247,9 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
                     label: Text(lang.text(en: "Call", ar: "اتصال")),
                   ),
                 ),
+
                 const SizedBox(height: 12),
+
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
@@ -246,6 +260,8 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
                           deviceName: deviceName,
                           lat: lat,
                           lng: lng,
+                          userId: vulnerableUserUid,
+                          deviceId: deviceId,
                         ),
                       ),
                     ),
@@ -261,18 +277,24 @@ class ECLinkedUserDetailsPage extends StatelessWidget {
                     ),
                   ),
                 ),
+
                 const SizedBox(height: 12),
+
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => DeviceHistoryScreen(
-                          deviceName: deviceName,
-                        ),
-                      ),
-                    ),
+                    onPressed: deviceId == "-"
+                        ? null
+                        : () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => DeviceHistoryScreen(
+                                  deviceName: deviceName,
+                                  deviceId: deviceId,
+                                  userId: vulnerableUserUid,
+                                ),
+                              ),
+                            ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.grey.shade700,
                     ),

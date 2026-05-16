@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -28,7 +30,9 @@ class _SignInScreenState extends State<SignInScreen> {
 
   Future<void> _login() async {
     final lang = appLanguage;
+
     FocusScope.of(context).unfocus();
+
     setState(() {
       loginError = null;
       _isLoading = true;
@@ -84,12 +88,86 @@ class _SignInScreenState extends State<SignInScreen> {
         MaterialPageRoute(builder: (_) => const RoleRouter()),
         (_) => false,
       );
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
+      String message;
+
+      if (e.code == 'network-request-failed') {
+        message = lang.text(
+          en: "No internet connection. Please check your network and try again.",
+          ar: "لا يوجد اتصال بالإنترنت. تحقق من الشبكة ثم حاول مرة أخرى.",
+        );
+      } else if (e.code == 'user-not-found' ||
+          e.code == 'wrong-password' ||
+          e.code == 'invalid-credential' ||
+          e.code == 'invalid-email') {
+        message = lang.text(
+          en: "Incorrect email or password.",
+          ar: "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
+        );
+      } else {
+        message = lang.text(
+          en: "Login failed. Please try again.",
+          ar: "فشل تسجيل الدخول. حاول مرة أخرى.",
+        );
+      }
+
+      setState(() {
+        loginError = message;
+        _isLoading = false;
+      });
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+
+      final isNetworkError =
+          e.code == 'unavailable' || e.code == 'network-request-failed';
+
+      setState(() {
+        loginError = isNetworkError
+            ? lang.text(
+                en:
+                    "No internet connection. Please check your network and try again.",
+                ar: "لا يوجد اتصال بالإنترنت. تحقق من الشبكة ثم حاول مرة أخرى.",
+              )
+            : lang.text(
+                en: "Login failed. Please try again.",
+                ar: "فشل تسجيل الدخول. حاول مرة أخرى.",
+              );
+        _isLoading = false;
+      });
+    } on SocketException {
+      if (!mounted) return;
+
       setState(() {
         loginError = lang.text(
-          en: "Login failed. Please check your credentials.",
-          ar: "فشل تسجيل الدخول. يرجى التحقق من بياناتك.",
+          en: "No internet connection. Please check your network and try again.",
+          ar: "لا يوجد اتصال بالإنترنت. تحقق من الشبكة ثم حاول مرة أخرى.",
         );
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      final errorText = e.toString().toLowerCase();
+
+      final isNetworkError = errorText.contains('network') ||
+          errorText.contains('socket') ||
+          errorText.contains('connection') ||
+          errorText.contains('host lookup') ||
+          errorText.contains('offline');
+
+      setState(() {
+        loginError = isNetworkError
+            ? lang.text(
+                en:
+                    "No internet connection. Please check your network and try again.",
+                ar: "لا يوجد اتصال بالإنترنت. تحقق من الشبكة ثم حاول مرة أخرى.",
+              )
+            : lang.text(
+                en: "Login failed. Please check your credentials.",
+                ar: "فشل تسجيل الدخول. يرجى التحقق من بياناتك.",
+              );
         _isLoading = false;
       });
     }
@@ -124,7 +202,6 @@ class _SignInScreenState extends State<SignInScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 8),
-
                   IconButton(
                     onPressed: () {
                       Navigator.pushAndRemoveUntil(
@@ -142,9 +219,7 @@ class _SignInScreenState extends State<SignInScreen> {
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
-
                   const SizedBox(height: 24),
-
                   Center(
                     child: Container(
                       width: 84,
@@ -172,9 +247,7 @@ class _SignInScreenState extends State<SignInScreen> {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 28),
-
                   Center(
                     child: Text(
                       lang.text(en: 'Sign In', ar: 'تسجيل الدخول'),
@@ -183,13 +256,12 @@ class _SignInScreenState extends State<SignInScreen> {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 12),
-
                   Center(
                     child: Text(
                       lang.text(
-                        en: 'Access your account and stay connected to your safety network.',
+                        en:
+                            'Access your account and stay connected to your safety network.',
                         ar: 'ادخل إلى حسابك وابقَ متصلًا بشبكة سلامتك.',
                       ),
                       textAlign: TextAlign.center,
@@ -198,9 +270,7 @@ class _SignInScreenState extends State<SignInScreen> {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 32),
-
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -252,9 +322,7 @@ class _SignInScreenState extends State<SignInScreen> {
                               return null;
                             },
                           ),
-
                           const SizedBox(height: 18),
-
                           Text(
                             lang.text(en: 'Password', ar: 'كلمة المرور'),
                             style: theme.textTheme.titleMedium?.copyWith(
@@ -292,15 +360,14 @@ class _SignInScreenState extends State<SignInScreen> {
                               if (value.length < 6) {
                                 return lang.text(
                                   en: "Password must be at least 6 characters",
-                                  ar: "يجب أن تكون كلمة المرور 6 أحرف على الأقل",
+                                  ar:
+                                      "يجب أن تكون كلمة المرور 6 أحرف على الأقل",
                                 );
                               }
                               return null;
                             },
                           ),
-
                           const SizedBox(height: 10),
-
                           Align(
                             alignment: Alignment.centerRight,
                             child: TextButton(
@@ -325,7 +392,6 @@ class _SignInScreenState extends State<SignInScreen> {
                               ),
                             ),
                           ),
-
                           if (loginError != null) ...[
                             const SizedBox(height: 4),
                             Container(
@@ -352,9 +418,7 @@ class _SignInScreenState extends State<SignInScreen> {
                               ),
                             ),
                           ],
-
                           const SizedBox(height: 20),
-
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
@@ -380,11 +444,8 @@ class _SignInScreenState extends State<SignInScreen> {
                       ),
                     ),
                   ),
-
                   const Spacer(),
-
                   const SizedBox(height: 24),
-
                   Center(
                     child: Wrap(
                       alignment: WrapAlignment.center,
@@ -419,7 +480,6 @@ class _SignInScreenState extends State<SignInScreen> {
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 8),
                 ],
               ),

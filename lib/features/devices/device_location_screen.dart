@@ -10,9 +10,11 @@ class DeviceLocationScreen extends StatelessWidget {
   final double? lat;
   final double? lng;
 
-  /// Optional:
-  /// إذا أرسلتي userId بيقرأ الموقع live من users/{userId}
+  /// UID حق صاحب الجهاز.
   final String? userId;
+
+  /// Device document ID.
+  final String? deviceId;
 
   const DeviceLocationScreen({
     super.key,
@@ -20,6 +22,7 @@ class DeviceLocationScreen extends StatelessWidget {
     this.lat,
     this.lng,
     this.userId,
+    this.deviceId,
   });
 
   Future<void> _openGoogleMaps(
@@ -76,6 +79,64 @@ class DeviceLocationScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (userId != null && userId!.isNotEmpty) {
+      final hasValidDeviceId =
+          deviceId != null && deviceId!.isNotEmpty && deviceId != "-";
+
+      if (hasValidDeviceId) {
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(userId)
+              .collection('devices')
+              .doc(deviceId)
+              .snapshots(),
+          builder: (context, deviceSnapshot) {
+            return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(userId)
+                  .snapshots(),
+              builder: (context, userSnapshot) {
+                final deviceData = deviceSnapshot.data?.data() ?? {};
+                final userData = userSnapshot.data?.data() ?? {};
+
+                final liveLat = _toDouble(deviceData['lat']) ??
+                    _toDouble(deviceData['latitude']) ??
+                    _toDouble(userData['lat']) ??
+                    _toDouble(userData['latitude']) ??
+                    lat;
+
+                final liveLng = _toDouble(deviceData['lng']) ??
+                    _toDouble(deviceData['longitude']) ??
+                    _toDouble(userData['lng']) ??
+                    _toDouble(userData['longitude']) ??
+                    lng;
+
+                final gpsFix =
+                    deviceData['gpsFix'] == true || userData['gpsFix'] == true;
+
+                final sat = deviceData['sat'] ?? userData['sat'];
+
+                final updatedAt = deviceData['updatedAt'] ??
+                    deviceData['lastUpdate'] ??
+                    userData['updatedAt'] ??
+                    userData['lastUpdate'];
+
+                return _LocationBody(
+                  deviceName: deviceName,
+                  lat: liveLat,
+                  lng: liveLng,
+                  gpsFix: gpsFix,
+                  sat: sat,
+                  updatedAt: updatedAt,
+                  onOpenMaps: () => _openGoogleMaps(context, liveLat, liveLng),
+                );
+              },
+            );
+          },
+        );
+      }
+
       return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: FirebaseFirestore.instance
             .collection('users')
@@ -84,11 +145,15 @@ class DeviceLocationScreen extends StatelessWidget {
         builder: (context, snapshot) {
           final data = snapshot.data?.data() ?? {};
 
-          final liveLat = _toDouble(data['lat']) ?? lat;
-          final liveLng = _toDouble(data['lng']) ?? lng;
+          final liveLat =
+              _toDouble(data['lat']) ?? _toDouble(data['latitude']) ?? lat;
+
+          final liveLng =
+              _toDouble(data['lng']) ?? _toDouble(data['longitude']) ?? lng;
+
           final gpsFix = data['gpsFix'] == true;
           final sat = data['sat'];
-          final updatedAt = data['updatedAt'];
+          final updatedAt = data['updatedAt'] ?? data['lastUpdate'];
 
           return _LocationBody(
             deviceName: deviceName,
@@ -142,6 +207,16 @@ class _LocationBody extends StatelessWidget {
       return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')} "
           "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
     }
+
+    if (value is DateTime) {
+      return "${value.year}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')} "
+          "${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}";
+    }
+
+    if (value != null && value.toString().trim().isNotEmpty) {
+      return value.toString();
+    }
+
     return "-";
   }
 
@@ -237,8 +312,10 @@ class _LocationBody extends StatelessWidget {
                           hasLocation
                               ? "Lat: ${lat!.toStringAsFixed(6)}\nLng: ${lng!.toStringAsFixed(6)}"
                               : lang.text(
-                                  en: "No valid GPS location is available yet from the device.",
-                                  ar: "لا يوجد موقع GPS صالح من الجهاز حتى الآن.",
+                                  en:
+                                      "No valid GPS location is available yet from the device.",
+                                  ar:
+                                      "لا يوجد موقع GPS صالح من الجهاز حتى الآن.",
                                 ),
                           textAlign: TextAlign.center,
                           style: theme.textTheme.bodyMedium?.copyWith(
