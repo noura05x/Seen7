@@ -6,9 +6,14 @@ import '../../../core/theme/colors.dart';
 import '../../../main.dart';
 import 'ec_alert_details_page.dart';
 
-class ECAlertsPage extends StatelessWidget {
+class ECAlertsPage extends StatefulWidget {
   const ECAlertsPage({super.key});
 
+  @override
+  State<ECAlertsPage> createState() => _ECAlertsPageState();
+}
+
+class _ECAlertsPageState extends State<ECAlertsPage> {
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
@@ -72,6 +77,7 @@ class ECAlertsPage extends StatelessWidget {
           }
 
           final sortedDocs = [...docs];
+
           sortedDocs.sort((a, b) {
             final aData = a.data() as Map<String, dynamic>;
             final bData = b.data() as Map<String, dynamic>;
@@ -82,6 +88,7 @@ class ECAlertsPage extends StatelessWidget {
             if (aTime is Timestamp && bTime is Timestamp) {
               return bTime.compareTo(aTime);
             }
+
             return 0;
           });
 
@@ -93,11 +100,13 @@ class ECAlertsPage extends StatelessWidget {
 
             final expiresAtRaw = data['expiresAt'];
             DateTime? expiresAt;
+
             if (expiresAtRaw is Timestamp) {
               expiresAt = expiresAtRaw.toDate();
             }
 
             final notExpired = expiresAt == null || expiresAt.isAfter(now);
+
             return status == 'Triggered' && notExpired;
           }).toList();
 
@@ -107,11 +116,13 @@ class ECAlertsPage extends StatelessWidget {
 
             final expiresAtRaw = data['expiresAt'];
             DateTime? expiresAt;
+
             if (expiresAtRaw is Timestamp) {
               expiresAt = expiresAtRaw.toDate();
             }
 
             final expired = expiresAt != null && expiresAt.isBefore(now);
+
             return status != 'Triggered' || expired;
           }).toList();
 
@@ -126,7 +137,9 @@ class ECAlertsPage extends StatelessWidget {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
+
                 const SizedBox(height: 14),
+
                 if (activeAlerts.isEmpty)
                   _emptyCard(
                     lang.text(
@@ -135,15 +148,21 @@ class ECAlertsPage extends StatelessWidget {
                     ),
                   )
                 else
-                  ...activeAlerts.map((doc) => _buildAlertCard(context, doc)),
+                  ...activeAlerts.map(
+                    (doc) => _buildAlertCard(context, doc),
+                  ),
+
                 const SizedBox(height: 26),
+
                 Text(
                   lang.text(en: "History", ar: "السجل"),
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
+
                 const SizedBox(height: 14),
+
                 if (historyAlerts.isEmpty)
                   _emptyCard(
                     lang.text(
@@ -152,7 +171,9 @@ class ECAlertsPage extends StatelessWidget {
                     ),
                   )
                 else
-                  ...historyAlerts.map((doc) => _buildAlertCard(context, doc)),
+                  ...historyAlerts.map(
+                    (doc) => _buildAlertCard(context, doc),
+                  ),
               ],
             ),
           );
@@ -174,6 +195,7 @@ class ECAlertsPage extends StatelessWidget {
         .toString();
 
     final String status = (alert['status'] ?? 'Triggered').toString();
+
     final String streamStatus =
         (alert['streamStatus'] ?? 'unavailable').toString();
 
@@ -185,7 +207,9 @@ class ECAlertsPage extends StatelessWidget {
         (streamStatus == 'ready' || streamStatus == 'live');
 
     final timestamp = alert['triggeredAt'] ?? alert['createdAt'];
+
     DateTime? dateTime;
+
     if (timestamp is Timestamp) {
       dateTime = timestamp.toDate();
     }
@@ -244,7 +268,9 @@ class ECAlertsPage extends StatelessWidget {
                         : AppColors.textPrimary,
                   ),
                 ),
+
                 const SizedBox(width: 14),
+
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -256,7 +282,9 @@ class ECAlertsPage extends StatelessWidget {
                           color: AppColors.textPrimary,
                         ),
                       ),
+
                       const SizedBox(height: 4),
+
                       Text(
                         "$location • $formattedTime",
                         style: const TextStyle(
@@ -264,6 +292,7 @@ class ECAlertsPage extends StatelessWidget {
                           fontSize: 13,
                         ),
                       ),
+
                       if (battery != null) ...[
                         const SizedBox(height: 3),
                         Text(
@@ -277,6 +306,7 @@ class ECAlertsPage extends StatelessWidget {
                     ],
                   ),
                 ),
+
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -297,7 +327,9 @@ class ECAlertsPage extends StatelessWidget {
                 ),
               ],
             ),
+
             const SizedBox(height: 12),
+
             Row(
               children: [
                 Flexible(
@@ -322,7 +354,9 @@ class ECAlertsPage extends StatelessWidget {
                         : AppColors.textSecondary,
                   ),
                 ),
+
                 const SizedBox(width: 8),
+
                 Flexible(
                   child: _miniPill(
                     icon: audioEnabled

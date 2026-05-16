@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -19,12 +21,132 @@ class ECShell extends StatefulWidget {
 class _ECShellState extends State<ECShell> {
   int _selectedIndex = 0;
 
+  StreamSubscription<QuerySnapshot>? _alertsSubscription;
+  final Set<String> _knownAlertIds = {};
+  bool _initialAlertsLoaded = false;
+  bool _dialogShowing = false;
+
   final List<Widget> pages = const [
     ECDashboard(),
     ECAlertsPage(),
     ECLinkedUsersPage(),
     ECSettingsPage(),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _listenForEmergencyAlerts();
+  }
+
+  void _listenForEmergencyAlerts() {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
+    _alertsSubscription = FirebaseFirestore.instance
+        .collection('alerts')
+        .where('emergencyContactIds', arrayContains: currentUser.uid)
+        .where('status', isEqualTo: 'Triggered')
+        .snapshots()
+        .listen((snapshot) {
+      if (!_initialAlertsLoaded) {
+        for (final doc in snapshot.docs) {
+          _knownAlertIds.add(doc.id);
+        }
+        _initialAlertsLoaded = true;
+        return;
+      }
+
+      for (final change in snapshot.docChanges) {
+        if (change.type == DocumentChangeType.added &&
+            !_knownAlertIds.contains(change.doc.id)) {
+          _knownAlertIds.add(change.doc.id);
+
+          final data = change.doc.data() as Map<String, dynamic>;
+          _showEmergencyPopup(data);
+        }
+      }
+    });
+  }
+
+  void _showEmergencyPopup(Map<String, dynamic> alert) {
+    if (!mounted || _dialogShowing) return;
+
+    final lang = appLanguage;
+
+    final userName = (alert['userName'] ??
+            lang.text(en: 'Unknown User', ar: 'مستخدم غير معروف'))
+        .toString();
+
+    final location = (alert['location'] ??
+            lang.text(en: 'Unknown Location', ar: 'موقع غير معروف'))
+        .toString();
+
+    _dialogShowing = true;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(22),
+        ),
+        title: Row(
+          children: [
+            const Icon(
+              Icons.warning_amber_rounded,
+              color: AppColors.emergencyRed,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              lang.text(en: "Emergency Alert", ar: "تنبيه طارئ"),
+              style: const TextStyle(
+                color: AppColors.emergencyRed,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          lang.text(
+            en: "$userName triggered an emergency alert.\nLocation: $location",
+            ar: "قام $userName بتفعيل تنبيه طارئ.\nالموقع: $location",
+          ),
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() => _selectedIndex = 1);
+            },
+            child: Text(
+              lang.text(en: "View Alerts", ar: "عرض التنبيهات"),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+            },
+            child: Text(
+              lang.text(en: "Dismiss", ar: "إغلاق"),
+            ),
+          ),
+        ],
+      ),
+    ).then((_) {
+      _dialogShowing = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _alertsSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
